@@ -1,53 +1,84 @@
 pipeline {
-    agent none
+agent any
 
-    stages{
-        stage("Test"){
-            agent {
-                docker {
-                    image 'node:lts-alpine'
-                    args '-u root:root'
-                }
-            }
-            steps{
-                sh "chmod +x -R ${env.WORKSPACE}"
-                sh './scripts/test.sh'
-            }
-        }
-        stage("Build"){
-            agent {
-                docker {
-                    image 'node:lts-alpine'
-                    args '-u root:root'
-                }
-            }
-            steps{
-                sh "chmod +x -R ${env.WORKSPACE}"
-                sh "npm install"
-                sh "./scripts/deliver-for-development.sh"
-            }
-        }
-        stage("Deliver for Development"){
-            agent any
-            when {
-                branch "development"
-            }
-            steps{
-                sh 'sudo rm -rf /var/www/jenkins-weather-app'
-                sh "sudo cp -r ${env.WORKSPACE}/build /var/www/jenkins-weather-app"
-                sh "sudo ls /var/www/jenkins-weather-app"
-                // sh './scripts/kill.sh'
-            }
-        }
-        stage("Deploy for Production"){
-            when {
-                branch "production"
-            }
-            steps {
-                sh './scripts/deploy-for-production.sh'
-                input message: 'Finished using the web site? (Click "Proceed" to continue)'
-                sh './scripts/kill.sh'
-            }
+```
+environment {
+    IMAGE_NAME = "react-weather-app"
+    CONTAINER_NAME = "react-weather-container"
+    PORT = "3003"
+}
+
+stages {
+
+    stage('Checkout') {
+        steps {
+            git 'https://github.com/Sauravambuskar/react-weather-app.git'
         }
     }
+
+    stage('Install Dependencies') {
+        steps {
+            sh '''
+            docker run --rm \
+            -v $WORKSPACE:/app \
+            -w /app \
+            node:lts-alpine \
+            npm install
+            '''
+        }
+    }
+
+    stage('Test') {
+        steps {
+            sh '''
+            docker run --rm \
+            -v $WORKSPACE:/app \
+            -w /app \
+            node:lts-alpine \
+            npm test -- --watchAll=false
+            '''
+        }
+    }
+
+    stage('Build React App') {
+        steps {
+            sh '''
+            docker run --rm \
+            -e CI=false \
+            -v $WORKSPACE:/app \
+            -w /app \
+            node:lts-alpine \
+            npm run build
+            '''
+        }
+    }
+
+    stage('Docker Build Image') {
+        steps {
+            sh 'docker build -t $IMAGE_NAME .'
+        }
+    }
+
+    stage('Deploy Container') {
+        steps {
+            sh '''
+            docker stop $CONTAINER_NAME || true
+            docker rm $CONTAINER_NAME || true
+            docker run -d -p $PORT:80 --name $CONTAINER_NAME $IMAGE_NAME
+            '''
+        }
+    }
+}
+
+post {
+    success {
+        echo "Application deployed successfully!"
+        echo "Access it at: http://<server-ip>:3003"
+    }
+    failure {
+        echo "Pipeline failed!"
+    }
+}
+```
+
 }
